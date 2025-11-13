@@ -3,8 +3,15 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import pandas as pd
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict
 import datetime
+
+load_dotenv()
+
+# --- PAGE CONFIG ---
+# This should be the first Streamlit command
+st.set_page_config(page_title="Clinic Frontend", layout="wide")
+
 
 # --- THEME DEFINITIONS ---
 THEMES = {
@@ -118,17 +125,24 @@ def apply_custom_css(theme: dict):
             color: {theme["text"]} !important;
         }}
 
+        /* Fix for dark-mode-base text inputs */
+        div[data-testid="stTextInput"] div[data-baseweb="input"] > div,
+        div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+            background-color: {theme["secondary_bg"]};
+            border-color: {theme["grid"]};
+        }}
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stSelectbox"] div[data-baseweb="select"] div {{
+            color: {theme["text"]} !important;
+        }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
+# --- END THEME ---
 
-load_dotenv()
 
-# 3. Theme toggle is set here. 
-# We can't dynamically change it, so we use "auto"
-# and point users to the settings menu.
-st.set_page_config(page_title="Clinic Frontend", layout="wide")
+# --- SUPABASE & SESSION STATE ---
 
 @st.cache_resource
 def init_supabase() -> Client:
@@ -136,7 +150,6 @@ def init_supabase() -> Client:
     key = os.environ.get("SUPABASE_KEY")
     
     if not url or not key:
-        # 2. Emojis removed
         st.error("Supabase credentials not found. Please configure SUPABASE_URL and SUPABASE_KEY.")
         st.stop()
     
@@ -144,6 +157,7 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# Initialize session state
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_name = None
@@ -161,13 +175,37 @@ current_theme = THEMES[st.session_state.selected_theme]
 apply_custom_css(current_theme)
 # --- END THEME APPLICATION ---
 
+
+# --- FUNCTION DEFINITIONS ---
+
+def find_id_column(table_name: str, id_value: str, possible_columns: list) -> Optional[str]:
+    """Find which column name exists and matches the ID value in the given table."""
+    
+    try:
+        numeric_id = int(id_value)
+    except ValueError:
+        st.error(f"ID must be a number. You entered '{id_value}'.")
+        return None 
+
+    for col_name in possible_columns:
+        try:
+            response = supabase.table(table_name).select("*").eq(col_name, numeric_id).execute()
+            if response.data:
+                return col_name
+        except Exception as e:
+            error_str = str(e)
+            if "does not exist" not in error_str.lower():
+                st.warning(f"Unexpected error checking column '{col_name}' in table '{table_name}': {error_str}")
+            continue
+    return None
+
 def login(user_id: str, position: str):
     role = None
     id_column = None
     user_name = None
     error_details = []
     
-    # 5. Convert to int *once* for all checks
+    # Convert to int *once* for all checks
     try:
         numeric_user_id = int(user_id)
     except ValueError:
@@ -177,12 +215,11 @@ def login(user_id: str, position: str):
     try:
         if position == 'Doctor':
             possible_columns = ['doctor_id'] 
-            id_column = find_id_column("doctor", user_id, possible_columns) # find_id_column still needs the string
+            id_column = find_id_column("doctor", user_id, possible_columns) # find_id_column needs the string
             
             if id_column:
                 role = "Doctor"
                 try:
-                    # 5. Use numeric_user_id to fetch name
                     name_response = supabase.table("staff").select("name").eq("staff_id", numeric_user_id).execute()
                     if name_response.data:
                         user_name = name_response.data[0]['name']
@@ -200,7 +237,6 @@ def login(user_id: str, position: str):
             if id_column:
                 role = "Nurse"
                 try:
-                    # 5. Use numeric_user_id to fetch name
                     name_response = supabase.table("staff").select("name").eq("staff_id", numeric_user_id).execute()
                     if name_response.data:
                         user_name = name_response.data[0]['name']
@@ -218,7 +254,6 @@ def login(user_id: str, position: str):
             if id_column:
                 role = "Patient"
                 try:
-                    # 5. Use numeric_user_id to fetch name
                     name_response = supabase.table("patient").select("name").eq(id_column, numeric_user_id).execute()
                     if name_response.data:
                         user_name = name_response.data[0]['name']
@@ -231,12 +266,12 @@ def login(user_id: str, position: str):
                 error_details.append(f"No patient found with ID '{user_id}' in column 'patient_id'.")
         
     except Exception as e:
+        # This will catch the NameError if find_id_column isn't defined
         error_details.append(f"Database connection error: {str(e)}")
     
     if role and user_name:
         st.session_state.logged_in = True
         st.session_state.user_name = user_name
-        # 5. Store the *numeric* ID in session state
         st.session_state.user_id = numeric_user_id 
         st.session_state.user_role = role
         st.rerun()
@@ -253,14 +288,12 @@ def logout():
     st.session_state.patient_id_column = None
     st.rerun()
 
-# 5. Updated to accept 'Any' type for eq_value, as it will now be an INT
 def safe_query(table_name: str, eq_column: Optional[str] = None, eq_value: Optional[Any] = None) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Safely query a Supabase table and return a DataFrame or error message.
     """
     try:
         if eq_column and eq_value is not None:
-            # This query now works because eq_value is an INT
             response = supabase.table(table_name).select("*").eq(eq_column, eq_value).execute()
         else:
             response = supabase.table(table_name).select("*").execute()
@@ -278,18 +311,15 @@ def safe_query(table_name: str, eq_column: Optional[str] = None, eq_value: Optio
         else:
             return None, f"Error accessing {table_name}: {error_msg}"
 
-# 4. New function to get cancellable appointments
 def get_cancellable_appointments(id_column: str, user_id: int) -> pd.DataFrame:
     df, _ = safe_query("appointment", id_column, user_id)
     if df is not None:
         df = df[df['status'] == 'Booked']
-        # Need to join with staff/patient to get names, but for now just show IDs
-        # A more advanced version would join tables
+        # A more advanced version would join tables to get names
         df['display'] = "Appt ID: " + df['appointment_id'].astype(str) + " on " + df['appointment_datetime'].astype(str)
         return df
     return pd.DataFrame(columns=['appointment_id', 'display'])
 
-# 4. New function to handle booking
 def book_appointment(patient_id, doctor_id, clinic_id, appt_datetime, reason):
     try:
         response = supabase.table("appointment").insert({
@@ -310,7 +340,6 @@ def book_appointment(patient_id, doctor_id, clinic_id, appt_datetime, reason):
     except Exception as e:
         st.error(f"Error: {str(e)}")
 
-# 4. New function to handle cancellation
 def cancel_appointment(appointment_id: int):
     try:
         response = supabase.table("appointment").update({"status": "Cancelled"}).eq("appointment_id", appointment_id).execute()
@@ -323,24 +352,18 @@ def cancel_appointment(appointment_id: int):
         st.error(f"Error: {str(e)}")
 
 def doctor_dashboard():
-    # 2. Emojis removed
     st.title("Doctor Dashboard")
-    st.write(f"Welcome, {st.session_state.user_name}!")
+    st.write(f"Welcome, Dr. {st.session_state.user_name}!")
     
-    # 1. & 4. Tabs updated
     tab1, tab2, tab3, tab4 = st.tabs(["My Patients", "My Appointments", "All Payments", "Manage Appointments"])
     
     with tab1:
-        # 1. Scoped to this Doctor
         st.subheader("My Patients")
         try:
-            # First, get all appointments for this doctor
             appt_response = supabase.table("appointment").select("patient_id").eq("doctor_id", st.session_state.user_id).execute()
             if appt_response.data:
-                # Get unique patient IDs
                 patient_ids = list(set([d['patient_id'] for d in appt_response.data]))
                 
-                # Now, fetch details for those patients
                 patient_response = supabase.table("patient").select("*").in_("patient_id", patient_ids).execute()
                 if patient_response.data:
                     st.dataframe(pd.DataFrame(patient_response.data), use_container_width=True)
@@ -352,7 +375,6 @@ def doctor_dashboard():
             st.error(f"Error fetching patients: {str(e)}")
 
     with tab2:
-        # 1. Scoped to this Doctor
         st.subheader("My Appointments")
         df, error = safe_query("appointment", "doctor_id", st.session_state.user_id)
         if df is not None:
@@ -372,7 +394,6 @@ def doctor_dashboard():
         else:
             st.info("No payments found.")
 
-    # 4. New "Manage Appointments" tab for Doctor
     with tab4:
         st.subheader("Manage Appointments")
         book_tab, cancel_tab = st.tabs(["Book New Appointment", "Cancel Appointment"])
@@ -380,26 +401,76 @@ def doctor_dashboard():
         with book_tab:
             st.subheader("Book New Appointment")
             
-            # Get list of all patients
+            booking_mode = st.radio("Select Patient Type", ["Existing Patient", "New Patient"], horizontal=True)
+            
             patients_df, _ = safe_query("patient")
-            if patients_df is not None:
-                patient_options = {row['name']: row['patient_id'] for index, row in patients_df.iterrows()}
+            
+            if patients_df is None and booking_mode == "Existing Patient":
+                st.warning("Could not load patient list. Please add a new patient.")
+                booking_mode = "New Patient"
                 
-                with st.form("doctor_book_form"):
-                    selected_patient_name = st.selectbox("Select Patient", options=patient_options.keys())
-                    appt_date = st.date_input("Appointment Date", min_value=datetime.date.today())
-                    appt_time = st.time_input("Appointment Time", value=datetime.time(9, 0))
-                    reason = st.text_area("Reason for visit")
-                    submit_button = st.form_submit_button("Book Appointment")
+            with st.form("doctor_book_form"):
+                patient_id_to_book = None 
 
-                    if submit_button:
-                        patient_id = patient_options[selected_patient_name]
+                if booking_mode == "Existing Patient":
+                    if patients_df is not None:
+                        patient_options = {row['name']: row['patient_id'] for index, row in patients_df.iterrows()}
+                        selected_patient_name = st.selectbox("Select Existing Patient", options=patient_options.keys())
+                        patient_id_to_book = patient_options[selected_patient_name]
+                    else:
+                        st.error("Patient list is unavailable. Please select 'New Patient'.")
+                
+                else: # booking_mode == "New Patient"
+                    st.subheader("New Patient Details")
+                    new_patient_name = st.text_input("Name")
+                    new_patient_email = st.text_input("Email")
+                    new_patient_phone = st.text_input("Phone")
+                    new_patient_dob = st.date_input("Date of Birth", 
+                                                    min_value=datetime.date(1900, 1, 1), 
+                                                    max_value=datetime.date.today(),
+                                                    value=datetime.date(2000, 1, 1))
+                    new_patient_gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+                    new_patient_addr = st.text_area("Address")
+                
+                st.divider()
+                st.subheader("Appointment Details")
+                appt_date = st.date_input("Appointment Date", min_value=datetime.date.today())
+                appt_time = st.time_input("Appointment Time", value=datetime.time(9, 0))
+                reason = st.text_area("Reason for visit")
+                submit_button = st.form_submit_button("Book Appointment")
+
+                if submit_button:
+                    if booking_mode == "New Patient":
+                        if not new_patient_name:
+                            st.error("New patient's Name is required.")
+                        else:
+                            try:
+                                new_patient_data = {
+                                    "name": new_patient_name,
+                                    "email": new_patient_email,
+                                    "phone": new_patient_phone,
+                                    "date_of_birth": str(new_patient_dob),
+                                    "gender": new_patient_gender,
+                                    "addr": new_patient_addr
+                                }
+                                insert_response = supabase.table("patient").insert(new_patient_data).execute()
+                                
+                                if insert_response.data:
+                                    patient_id_to_book = insert_response.data[0]['patient_id']
+                                    st.success(f"Successfully created new patient: {new_patient_name} (ID: {patient_id_to_book})")
+                                else:
+                                    st.error(f"Failed to create new patient: {insert_response.error.message if insert_response.error else 'Unknown error'}")
+
+                            except Exception as e:
+                                st.error(f"Error creating patient: {str(e)}")
+                    
+                    if patient_id_to_book is not None:
                         doctor_id = st.session_state.user_id
                         clinic_id = 1 # Hardcoding clinic ID 1 as example
                         appt_datetime_str = f"{appt_date} {appt_time}"
-                        book_appointment(patient_id, doctor_id, clinic_id, appt_datetime_str, reason)
-            else:
-                st.warning("Could not load patient list.")
+                        book_appointment(patient_id_to_book, doctor_id, clinic_id, appt_datetime_str, reason)
+                    elif booking_mode == "Existing Patient":
+                         st.error("No patient was selected.")
 
         with cancel_tab:
             st.subheader("Cancel an Appointment")
@@ -445,15 +516,12 @@ def patient_dashboard():
     st.title("Patient Dashboard")
     st.write(f"Welcome, {st.session_state.user_name}!")
     
-    # 4. Tabs updated
     tab1, tab2, tab3, tab4 = st.tabs(["My Info", "My Appointments", "My Prescriptions", "Manage Appointments"])
     
-    # 5. This is now an INT, so it's a valid column name
     patient_id_col = st.session_state.patient_id_column or "patient_id" 
     
     with tab1:
         st.subheader("My Information")
-        # 5. This query will now work because user_id is an INT
         df, error = safe_query("patient", patient_id_col, st.session_state.user_id)
         if df is not None and not df.empty:
             patient_info = df.iloc[0].to_dict()
@@ -473,7 +541,6 @@ def patient_dashboard():
     
     with tab2:
         st.subheader("My Appointments")
-        # 5. This query will now work because user_id is an INT
         df, error = safe_query("appointment", patient_id_col, st.session_state.user_id)
         if df is not None:
             st.dataframe(df, use_container_width=True)
@@ -484,16 +551,28 @@ def patient_dashboard():
     
     with tab3:
         st.subheader("My Prescriptions")
-        # 5. This query will now work because user_id is an INT
-        df, error = safe_query("prescription", patient_id_col, st.session_state.user_id)
-        if df is not None:
-            st.dataframe(df, use_container_width=True)
-        elif error:
-            st.error(error)
-        else:
-            st.info("No prescriptions found.")
+        
+        try:
+            patient_id = st.session_state.user_id
+            
+            appt_response = supabase.table("appointment").select("appointment_id").eq("patient_id", patient_id).execute()
+            
+            if not appt_response.data:
+                st.info("No appointments found, so no prescriptions can be shown.")
+            else:
+                appointment_ids = [d['appointment_id'] for d in appt_response.data]
+                
+                presc_response = supabase.table("prescription").select("*").in_("appointment_id", appointment_ids).execute()
+                
+                if presc_response.data:
+                    df = pd.DataFrame(presc_response.data)
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("No prescriptions found for your past appointments.")
+                    
+        except Exception as e:
+            st.error(f"Error fetching prescriptions: {str(e)}")
 
-    # 4. New "Manage Appointments" tab for Patient
     with tab4:
         st.subheader("Manage Appointments")
         book_tab, cancel_tab = st.tabs(["Book New Appointment", "Cancel Appointment"])
@@ -501,7 +580,6 @@ def patient_dashboard():
         with book_tab:
             st.subheader("Book New Appointment")
             
-            # Get list of all doctors
             try:
                 doc_response = supabase.table("staff").select("staff_id, name").eq("staff_type", "Doctor").execute()
                 if doc_response.data:
@@ -539,9 +617,11 @@ def patient_dashboard():
                 st.info("You have no 'Booked' appointments to cancel.")
 
 
-# --- Main App Logic ---
+# --- MAIN APP LOGIC ---
+# This part MUST come AFTER all function definitions
 
 if not st.session_state.logged_in:
+    # --- LOGIN PAGE ---
     st.title("Clinic Management System")
     st.subheader("Login")
     
@@ -556,6 +636,7 @@ if not st.session_state.logged_in:
             else:
                 st.warning("Please select your position and enter your ID.")
 else:
+    # --- LOGGED-IN DASHBOARD ---
     with st.sidebar:
         st.write(f"**Logged in as:** {st.session_state.user_name}")
         st.write(f"**Role:** {st.session_state.user_role}")
@@ -565,7 +646,6 @@ else:
         # --- THEME SWITCHER UI ---
         st.subheader("Theme Settings")
         
-        # Theme mode toggle
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Light", use_container_width=True, 
@@ -583,17 +663,14 @@ else:
                     st.session_state.selected_theme = "Dark"
                 st.rerun()
         
-        # Filter themes based on mode
         if st.session_state.theme_mode == "dark":
             available_themes = {k: v for k, v in THEMES.items() if v["type"] == "dark"}
         else:
             available_themes = {k: v for k, v in THEMES.items() if v["type"] == "light"}
         
-        # Ensure selected theme matches current mode
         if st.session_state.selected_theme not in available_themes:
             st.session_state.selected_theme = list(available_themes.keys())[0]
         
-        # Theme selector dropdown
         selected_theme_name = st.selectbox(
             f"Choose {st.session_state.theme_mode.title()} Theme:",
             list(available_themes.keys()),
@@ -609,6 +686,7 @@ else:
         if st.button("Logout", type="primary"):
             logout()
     
+    # --- Dashboard Routing ---
     if st.session_state.user_role == "Doctor":
         doctor_dashboard()
     elif st.session_state.user_role == "Nurse":
