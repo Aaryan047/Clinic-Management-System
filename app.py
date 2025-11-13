@@ -383,7 +383,7 @@ def sign_up_patient(name, email, phone, dob, gender, addr):
 
 def doctor_dashboard():
     st.title("Doctor Dashboard")
-    st.write(f"Welcome, Dr. {st.session_state.user_name}!")
+    st.write(f"Welcome, {st.session_state.user_name}!")
     
     tab1, tab2, tab3, tab4 = st.tabs(["My Patients", "My Appointments", "All Payments", "Manage Appointments"])
     
