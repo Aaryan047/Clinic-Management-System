@@ -353,7 +353,7 @@ def sign_up_patient(name, email, phone, dob, gender, addr):
             "phone": phone,
             "date_of_birth": str(dob),
             "gender": gender,
-            "addr": addr
+            "address": addr  # <--- FIX: Renamed 'addr' to 'address'
         }
         
         # Insert new patient and get their details back
@@ -371,7 +371,8 @@ def sign_up_patient(name, email, phone, dob, gender, addr):
             st.session_state.user_role = "Patient"
             st.session_state.patient_id_column = "patient_id" # Set this for the dashboard
             
-            st.success(f"Welcome, {new_patient_name}! Your account has been created and you are now logged in.")
+            # <--- FIX: Show the user their new ID
+            st.success(f"Welcome, {new_patient_name}! Your account has been created. Your new Patient ID is {new_patient_id}. You are now logged in.")
             st.rerun()
         else:
             st.error(f"Sign up failed: {response.error.message if response.error else 'Unknown error'}")
@@ -480,9 +481,9 @@ def doctor_dashboard():
                                     "phone": new_patient_phone,
                                     "date_of_birth": str(new_patient_dob),
                                     "gender": new_patient_gender,
-                                    "addr": new_patient_addr
+                                    "address": new_patient_addr # <--- FIX: Renamed 'addr' to 'address'
                                 }
-                                insert_response = supabase.table("patient").insert(new_patient_data).execute()
+                                # Insert new patient and get their ID
                                 
                                 if insert_response.data:
                                     patient_id_to_book = insert_response.data[0]['patient_id']
@@ -682,7 +683,7 @@ if not st.session_state.logged_in:
                                             max_value=datetime.date.today(),
                                             value=datetime.date(2000, 1, 1))
             new_patient_gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-            new_patient_addr = st.text_area("Address")
+            new_patient_address = st.text_area("Address") # <--- FIX: Renamed variable
             
             signup_submit = st.form_submit_button("Sign Up")
             
@@ -694,7 +695,7 @@ if not st.session_state.logged_in:
                     new_patient_phone, 
                     new_patient_dob, 
                     new_patient_gender, 
-                    new_patient_addr
+                    new_patient_address # <--- FIX: Pass the renamed variable
                 )
 
 else:
