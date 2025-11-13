@@ -340,16 +340,45 @@ def book_appointment(patient_id, doctor_id, clinic_id, appt_datetime, reason):
     except Exception as e:
         st.error(f"Error: {str(e)}")
 
-def cancel_appointment(appointment_id: int):
+def sign_up_patient(name, email, phone, dob, gender, addr):
+    """Handles new patient sign up and logs them in."""
+    if not name:
+        st.error("Name is a required field.")
+        return
+
     try:
-        response = supabase.table("appointment").update({"status": "Cancelled"}).eq("appointment_id", appointment_id).execute()
+        new_patient_data = {
+            "name": name,
+            "email": email,
+            "phone": phone,
+            "date_of_birth": str(dob),
+            "gender": gender,
+            "addr": addr
+        }
+        
+        # Insert new patient and get their details back
+        response = supabase.table("patient").insert(new_patient_data).execute()
+        
         if response.data:
-            st.success("Appointment cancelled successfully!")
+            new_user = response.data[0]
+            new_patient_id = new_user['patient_id']
+            new_patient_name = new_user['name']
+            
+            # Log the new user in
+            st.session_state.logged_in = True
+            st.session_state.user_name = new_patient_name
+            st.session_state.user_id = new_patient_id
+            st.session_state.user_role = "Patient"
+            st.session_state.patient_id_column = "patient_id" # Set this for the dashboard
+            
+            st.success(f"Welcome, {new_patient_name}! Your account has been created and you are now logged in.")
             st.rerun()
         else:
-            st.error(f"Failed to cancel appointment: {response.error.message if response.error else 'Unknown error'}")
+            st.error(f"Sign up failed: {response.error.message if response.error else 'Unknown error'}")
+
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"An error occurred during sign up: {str(e)}")
+
 
 def doctor_dashboard():
     st.title("Doctor Dashboard")
@@ -623,18 +652,51 @@ def patient_dashboard():
 if not st.session_state.logged_in:
     # --- LOGIN PAGE ---
     st.title("Clinic Management System")
-    st.subheader("Login")
     
-    with st.form("login_form"):
-        position = st.selectbox("Select your position:", ["Doctor", "Nurse", "Patient"])
-        user_id = st.text_input("ID") 
-        submit = st.form_submit_button("Login")
-        
-        if submit:
-            if user_id and position:
-                login(user_id, position)
-            else:
-                st.warning("Please select your position and enter your ID.")
+    login_tab, signup_tab = st.tabs(["Login", "Sign Up as New Patient"])
+    
+    with login_tab:
+        st.subheader("Login")
+        with st.form("login_form"):
+            position = st.selectbox("Select your position:", ["Doctor", "Nurse", "Patient"])
+            user_id = st.text_input("ID") 
+            submit = st.form_submit_button("Login")
+            
+            if submit:
+                if user_id and position:
+                    login(user_id, position)
+                else:
+                    st.warning("Please select your position and enter your ID.")
+
+    with signup_tab:
+        st.subheader("Create a New Patient Account")
+        with st.form("signup_form"):
+            st.write("Please fill in your details to create an account. Your Patient ID will be automatically generated.")
+            
+            # Get details for new patient
+            new_patient_name = st.text_input("Full Name*")
+            new_patient_email = st.text_input("Email")
+            new_patient_phone = st.text_input("Phone")
+            new_patient_dob = st.date_input("Date of Birth", 
+                                            min_value=datetime.date(1900, 1, 1), 
+                                            max_value=datetime.date.today(),
+                                            value=datetime.date(2000, 1, 1))
+            new_patient_gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+            new_patient_addr = st.text_area("Address")
+            
+            signup_submit = st.form_submit_button("Sign Up")
+            
+            if signup_submit:
+                # Call the new sign up function
+                sign_up_patient(
+                    new_patient_name, 
+                    new_patient_email, 
+                    new_patient_phone, 
+                    new_patient_dob, 
+                    new_patient_gender, 
+                    new_patient_addr
+                )
+
 else:
     # --- LOGGED-IN DASHBOARD ---
     with st.sidebar:
